@@ -1,0 +1,80 @@
+import os
+import time
+import openai
+import git
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+from dotenv import load_dotenv
+
+# .env-Datei laden
+load_dotenv()
+
+# OpenAI API-Key
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# GitHub Token und Repository-Pfad
+github_token = os.getenv("GITHUB_TOKEN")
+repo_path = os.getenv("REPO_PATH")
+input_file_path = os.path.join(repo_path, "input.txt")  # Datei, die du beobachtest
+github_file_path = os.path.join(repo_path, "1")        # Datei, in die die Antwort geht
+
+# Funktion, um Text an ChatGPT zu senden
+def get_chatgpt_response(prompt):
+    response = openai.Completion.create(
+        model="text-davinci-003",
+        prompt=prompt,
+        max_tokens=150
+    )
+    return response.choices[0].text.strip()
+
+# Funktion, um die Antwort direkt in GitHub-Datei zu speichern
+def save_to_github(response_text):
+    try:
+        # Repository laden
+        repo = git.Repo(repo_path)
+
+        # Antwort in Datei "1" schreiben
+        with open(github_file_path, "w") as f:
+            f.write(response_text)
+
+        # Datei zum Commit hinzufügen
+        repo.git.add("1")
+        # Commit erstellen
+        repo.index.commit("Automatische Antwort von ChatGPT")
+        # Pushen
+        origin = repo.remote(name='origin')
+        origin.push()
+        print("Antwort erfolgreich auf GitHub-Datei '1' hochgeladen.")
+    except Exception as e:
+        print(f"Fehler beim Hochladen auf GitHub: {e}")
+
+# Ereignisbehandler für Dateiänderungen
+class FileChangeHandler(FileSystemEventHandler):
+    def on_modified(self, event):
+        if event.src_path == input_file_path:
+            print(f"Änderung erkannt in {input_file_path}")
+            with open(input_file_path, "r") as file:
+                user_input = file.read().strip()
+            if user_input:
+                print("Sende an ChatGPT...")
+                response = get_chatgpt_response(user_input)
+                print("Antwort erhalten.")
+                save_to_github(response)
+            else:
+                print("Keine Eingabe in der Datei gefunden.")
+
+# Überwache die Datei auf Änderungen
+def monitor_file():
+    event_handler = FileChangeHandler()
+    observer = Observer()
+    observer.schedule(event_handler, path=os.path.dirname(input_file_path), recursive=False)
+    observer.start()
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
+
+if __name__ == "__main__":
+    monitor_file()
